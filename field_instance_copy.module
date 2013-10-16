@@ -1,0 +1,283 @@
+<?php
+
+/**
+ * @file
+ * Copies a field instance from one bundle to other bundles.
+ *
+ * @copyright (c) Copyright 2013 Palantir.net
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function field_instance_copy_menu() {
+
+  // @todo Add a callback for admin/structure/field_instance_copy that links
+  // to all of the 'admin/structure/field_instance_copy/%' possibilities.
+  $items = array();
+
+  $items['admin/structure/field-instance-copy'] = array(
+    'page callback' => 'field_instance_copy_overview_page',
+    // @todo, this module should provide its own permission.
+    "access arguments" => array('administer content types'),
+    'title' => 'Field Instance Copy',
+    'description' => 'Copy a field instance from one bundle to other bundles.',
+  );
+
+  $items['admin/structure/field-instance-copy/%'] = array(
+    'page callback' => 'drupal_get_form',
+    // The string of the instance name will be passed to the form.
+    'page arguments' => array('field_instance_copy_node_only_page_form', 3),
+    // @todo, this module should provide its own permission.
+    "access arguments" => array('administer content types'),
+    'title' => 'Field Instance Copy',
+  );
+
+  return $items;
+}
+
+/**
+ * Provide an overview page to list fields that can be copied.
+ */
+function field_instance_copy_overview_page() {
+
+  $all_instances = _field_instance_copy_get_all_instances_as_options();
+
+  $theme_links = array(
+    'heading' => array(
+      'text' => t('Select a field instance to copy'),
+      'level' => 'h3',
+    ),
+    'attributes' => array(),
+    'links' => array(),
+  );
+  foreach ($all_instances as $instance_machine_name => $instance_label) {
+    $theme_links['links'][] = array(
+      'title' => $instance_label,
+      'href'  => 'admin/structure/field-instance-copy/' . $instance_machine_name,
+    );
+  }
+
+  return theme('links', $theme_links);
+}
+
+/**
+ * Get all existing instances available to a site formatted as an array.
+ *
+ * @return array
+ *   An array suitable for usage as options in FAPI.
+ *   Keys are in the format:
+ *   [entity-type-name]-[entity-bundle-name]-[field-machine-name]
+ *   Values are in the format:
+ *   [entity-type-name]-[entity-bundle-name]-[field-machine-name]
+ *   For example
+ *   array(
+ *     'node-article-field_image' => 'node-article-field_image',
+ *     'node-article-field_tags'  => 'node-article-field_tags'
+ *   )
+ * @todo, make the values use the format:
+ * [entity-type-label]-[entity-bundle-label]-[field-machine-label]
+ */
+function _field_instance_copy_get_all_instances_as_options() {
+  $all_instances = field_info_instances();
+  $instance_names = array();
+
+  foreach ($all_instances as $entity_type => $entity_bundles) {
+    foreach ($entity_bundles as $bundle_name => $field_instances) {
+      foreach ($field_instances as $field_name => $field_instance) {
+        $instance_name = $entity_type . '-' . $bundle_name . '-' . $field_name;
+        $instance_names[$instance_name] = $instance_name;
+      }
+    }
+  }
+
+  return $instance_names;
+}
+
+/**
+ * A title callback for admin/structure/field_instance_copy/[instance-name].
+ *
+ * @param string $field_instance_name
+ *   A field instance name like "node-article-field_image"
+ *
+ * @return string
+ *   A page title.
+ */
+function field_instance_copy_form_page_title($field_instance_name) {
+  return t('Copy @field_instance_name to other bundles', array('@field_instance_name', $field_instance_name));
+}
+
+/**
+ * Return a field instance config array based on a field_instance_name.
+ *
+ * @param string $field_instance_name
+ *   A field instance name like "node-article-field_image"
+ *
+ * @return array
+ *   A field instance array. The return will be NULL if there is not a matching
+ *   instance.
+ */
+function field_instance_copy_definition_load($field_instance_name) {
+  list($entity, $bundle, $field_name) = explode('-', $field_instance_name);
+  return field_info_instance($entity, $field_name, $bundle);
+}
+
+/**
+ * Returns a form array that represents a way to copy an instance to bundles.
+ *
+ * @param array $form
+ *   A normal Drupal form array.
+ *
+ * @param array $form_state
+ *   A normal Drupal form_state array.
+ *
+ * @param string $field_instance_name
+ *   A field instance name like "node-article-field_image"
+ *
+ * @return array
+ *   A drupal form array suitable for drupal_get_form().
+ */
+function field_instance_copy_node_only_page_form($form, $form_state, $field_instance_name) {
+
+  if (!empty($field_instance_name) && $field_instance_definition = field_instance_copy_definition_load($field_instance_name)) {
+    $form['instance_markup'] = array(
+      '#type' => 'item',
+      '#title' => 'Field Instance to be copied',
+      '#markup' => "<pre>" . print_r($field_instance_definition, 1) . "</pre>",
+    );
+
+    $form['origin_instances'] = array(
+      '#type' => 'value',
+      '#value' => array(
+        $field_instance_name,
+      ),
+    );
+
+    $form['destination_options'] = array(
+      '#type' => 'checkboxes',
+      '#options' => _field_instance_copy_get_field_bundle_options(),
+      '#title' => t('Destination Options'),
+    );
+
+    $form['submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Copy field instance to all other node types'),
+    );
+
+    return $form;
+  }
+  else {
+    drupal_set_message("The specified field instance does not exist.", 'error');
+  }
+}
+
+/**
+ * Returns a list of bundles suitable for FAPI options.
+ *
+ * This is a helper function used in field_instance_copy_node_only_page_form()
+ * to generate a list of checkboxes.
+ *
+ * @return array
+ *   An array of strings that represent entity types and bundles.
+ *   Each key in the array should be in the format
+ *   [entity-type-name]-[entity-bundle-name]
+ *   Each value in the array should be in the format
+ *   [entity-type-label]-[entity-bundle-label]
+ *   array(
+ *     'node-article' => 'Node - Article',
+ *     'node-page' => 'Node - Page',
+ *     'file-video' => 'File - Video',
+ *   );
+ */
+function _field_instance_copy_get_field_bundle_options() {
+
+  $all_entity_info = entity_get_info();
+  $options = array();
+  foreach ($all_entity_info as $entity_type_name => $entity_info) {
+    if (!empty($entity_info['fieldable'])) {
+      foreach ($entity_info['bundles'] as $machine_name => $bundle_info) {
+        $options[$entity_type_name . '-' . $machine_name] = $entity_info['label'] . ' - ' . $bundle_info['label'];
+      }
+    }
+  }
+
+  return $options;
+}
+
+/**
+ * A submit callback for field_instance_copy_node_only_page_form().
+ *
+ * @param array $form
+ *   A normal Drupal form array.
+ *
+ * @param array $form_state
+ *   A normal Drupal form_state array.
+ */
+function field_instance_copy_node_only_page_form_submit($form, &$form_state) {
+  if ($destination_options = array_filter($form_state['values']['destination_options'])) {
+    foreach ($form_state['values']['origin_instances'] as $field_instance) {
+      field_instance_copy_copy_instance_to_bundles($field_instance, $destination_options);
+    }
+  }
+}
+
+/**
+ * Copy an existing field instance to a multiple bundles.
+ *
+ * @param string $field_instance_name
+ *   A field instance name like "node-article-field_image"
+ *
+ * @param array $entity_and_bundle_names
+ *   An array of strings that represent entity types and bundles.
+ *   Each value in the array should be in the format
+ *   [entity-type-name]-[entity-bundle-name]
+ *   array(
+ *     'node-article',
+ *     'node-page',
+ *     'file-video',
+ *   );
+ */
+function field_instance_copy_copy_instance_to_bundles($field_instance_name, $entity_and_bundle_names) {
+  foreach ($entity_and_bundle_names as $entity_and_bundle) {
+    list($entity_type, $bundle) = explode('-', $entity_and_bundle);
+    field_instance_copy_copy_instance($field_instance_name, $entity_type, $bundle);
+  }
+}
+
+/**
+ * Copy an existing field instance to a different bundle.
+ *
+ * @param string $field_instance_name
+ *   A field instance name like "node-article-field_image"
+ *
+ * @param string $destination_entity_type
+ *   The name of the entity type like 'node' on which to create a new instance.
+ *
+ * @param string $destination_bundle
+ *   The name of the entity type bundle like 'page' on which to create a new
+ *   instance.
+ */
+function field_instance_copy_copy_instance($field_instance_name, $destination_entity_type, $destination_bundle) {
+  $field_instance = field_instance_copy_definition_load($field_instance_name);
+  $field_name = $field_instance['field_name'];
+  // Set up an array of strings to be used in t().
+  $t_replacements = array(
+    '%field_instance_name' => $field_instance_name,
+    '%bundle' => $destination_bundle,
+    '%entity_type' => $destination_entity_type,
+    '%field_name' => $field_name,
+  );
+
+  // Check if the instance exists.
+  // @todo, add a boolean for overwriting existing instances.
+  if (field_info_instance($destination_entity_type, $field_name, $destination_bundle) === NULL) {
+
+    $field_instance['entity_type'] = $destination_entity_type;
+    $field_instance['bundle'] = $destination_bundle;
+    field_create_instance($field_instance);
+    drupal_set_message(t('Copied %field_instance_name to the %bundle bundle of the %entity_type entity type.', $t_replacements));
+  }
+  else {
+    drupal_set_message(t('There was already an instance of %field_name on the %bundle bundle of the %entity_type entity type.', $t_replacements), 'error');
+  }
+}

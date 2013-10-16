@@ -1,0 +1,8 @@
+; @copyright (c) Copyright 2013 Palantir.net
+
+name = Field Instance Copy
+description = Copy a field instance to other bundles.
+package = Palantir
+core = 7.x
+
+files[] = custom.module
